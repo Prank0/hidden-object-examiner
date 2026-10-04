@@ -53,11 +53,10 @@ final class HiddenObjectExaminerOverlay extends Overlay
 		Color border = new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.max(160, color.getAlpha()));
 		Stroke previousStroke = graphics.getStroke();
 		graphics.setStroke(new BasicStroke(2f));
-		for (TileObject object : plugin.getSceneObjects())
+		for (TileObject object : plugin.getHiddenObjects())
 		{
 			if (object.getWorldView() != player.getWorldView()
-				|| object.getWorldLocation().distanceTo2D(player.getWorldLocation()) > config.highlightDistance()
-				|| !plugin.isHiddenObject(object))
+				|| object.getWorldLocation().distanceTo2D(player.getWorldLocation()) > config.highlightDistance())
 			{
 				continue;
 			}

@@ -37,14 +37,13 @@ import net.runelite.client.ui.overlay.OverlayManager;
 
 @PluginDescriptor(
 	name = "Hidden Object Examiner",
-	description = "Highlights unnamed scenery and restores its Examine option",
+	description = "Highlights menu-suppressed scenery and restores its Examine option",
 	tags = {"examine", "objects", "scenery", "discovery", "exploration"}
 )
 public class HiddenObjectExaminerPlugin extends Plugin
 {
-	private final Set<TileObject> sceneObjects = Collections.newSetFromMap(new IdentityHashMap<>());
-	private final Set<TileObject> confirmedHiddenObjects = Collections.newSetFromMap(new IdentityHashMap<>());
-	private final Set<TileObject> confirmedNativeObjects = Collections.newSetFromMap(new IdentityHashMap<>());
+	private static final long MENU_SUPPRESSED_FLAG = 1L << 19;
+	private final Set<TileObject> hiddenObjects = Collections.newSetFromMap(new IdentityHashMap<>());
 
 	@Inject
 	private Client client;
@@ -72,9 +71,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	protected void shutDown()
 	{
 		overlayManager.remove(overlay);
-		sceneObjects.clear();
-		confirmedHiddenObjects.clear();
-		confirmedNativeObjects.clear();
+		hiddenObjects.clear();
 	}
 
 	@Subscribe
@@ -86,7 +83,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		}
 
 		Point mouse = client.getMouseCanvasPosition();
-		for (TileObject object : sceneObjects)
+		for (TileObject object : hiddenObjects)
 		{
 			if (!containsMouse(object, mouse))
 			{
@@ -103,13 +100,8 @@ public class HiddenObjectExaminerPlugin extends Plugin
 			Point menuPoint = getMenuPoint(object);
 			if (hasExamineEntry(object, examineId, menuPoint))
 			{
-				confirmedNativeObjects.add(object);
-				confirmedHiddenObjects.remove(object);
 				continue;
 			}
-
-			confirmedHiddenObjects.add(object);
-			confirmedNativeObjects.remove(object);
 
 			client.createMenuEntry(-1)
 				.setOption("Examine")
@@ -131,9 +123,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		}
 		else if (event.getGameState() == GameState.LOADING || event.getGameState() == GameState.LOGIN_SCREEN)
 		{
-			sceneObjects.clear();
-			confirmedHiddenObjects.clear();
-			confirmedNativeObjects.clear();
+			hiddenObjects.clear();
 		}
 	}
 
@@ -146,9 +136,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	@Subscribe
 	public void onWorldViewUnloaded(WorldViewUnloaded event)
 	{
-		sceneObjects.removeIf(object -> object.getWorldView() == event.getWorldView());
-		confirmedHiddenObjects.removeIf(object -> object.getWorldView() == event.getWorldView());
-		confirmedNativeObjects.removeIf(object -> object.getWorldView() == event.getWorldView());
+		hiddenObjects.removeIf(object -> object.getWorldView() == event.getWorldView());
 	}
 
 	@Subscribe
@@ -199,60 +187,14 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		remove(event.getGroundObject());
 	}
 
-	Set<TileObject> getSceneObjects()
+	Set<TileObject> getHiddenObjects()
 	{
-		return sceneObjects;
+		return hiddenObjects;
 	}
 
-	boolean isHiddenObject(TileObject object)
+	static boolean isMenuSuppressed(long hash)
 	{
-		if (confirmedNativeObjects.contains(object))
-		{
-			return false;
-		}
-		if (confirmedHiddenObjects.contains(object))
-		{
-			return true;
-		}
-
-		ObjectComposition composition = getActiveComposition(object);
-		if (composition == null)
-		{
-			return false;
-		}
-
-		boolean anyShownOperation = false;
-		for (int index = 0; index < 5; index++)
-		{
-			if (object.isOpShown(index))
-			{
-				anyShownOperation = true;
-				break;
-			}
-		}
-
-		return isHiddenDefinition(composition.getName(), composition.getActions(), anyShownOperation);
-	}
-
-	static boolean isHiddenDefinition(String name, String[] actions, boolean anyShownOperation)
-	{
-		if (name != null && !name.trim().isEmpty() && !"null".equalsIgnoreCase(name.trim()))
-		{
-			return false;
-		}
-
-		if (actions != null)
-		{
-			for (String action : actions)
-			{
-				if (action != null && !action.trim().isEmpty())
-				{
-					return false;
-				}
-			}
-		}
-
-		return !anyShownOperation;
+		return (hash & MENU_SUPPRESSED_FLAG) != 0;
 	}
 
 	static String targetFor(int objectId)
@@ -321,9 +263,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 
 	private void rebuildSceneObjects()
 	{
-		sceneObjects.clear();
-		confirmedHiddenObjects.clear();
-		confirmedNativeObjects.clear();
+		hiddenObjects.clear();
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			addWorldView(client.getTopLevelWorldView());
@@ -371,17 +311,15 @@ public class HiddenObjectExaminerPlugin extends Plugin
 
 	private void add(TileObject object)
 	{
-		if (object != null)
+		if (object != null && isMenuSuppressed(object.getHash()))
 		{
-			sceneObjects.add(object);
+			hiddenObjects.add(object);
 		}
 	}
 
 	private void remove(TileObject object)
 	{
-		sceneObjects.remove(object);
-		confirmedHiddenObjects.remove(object);
-		confirmedNativeObjects.remove(object);
+		hiddenObjects.remove(object);
 	}
 
 	@Provides
