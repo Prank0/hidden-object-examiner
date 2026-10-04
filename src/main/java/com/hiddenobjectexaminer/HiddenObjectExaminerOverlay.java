@@ -6,11 +6,15 @@ import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.Shape;
 import java.awt.Stroke;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Player;
 import net.runelite.api.TileObject;
+import net.runelite.api.coords.LocalPoint;
 import net.runelite.client.ui.overlay.Overlay;
 import net.runelite.client.ui.overlay.OverlayLayer;
 import net.runelite.client.ui.overlay.OverlayPosition;
@@ -20,6 +24,7 @@ final class HiddenObjectExaminerOverlay extends Overlay
 	private final Client client;
 	private final HiddenObjectExaminerPlugin plugin;
 	private final HiddenObjectExaminerConfig config;
+	private final Set<TileObject> nearbyObjects = Collections.newSetFromMap(new IdentityHashMap<>());
 
 	@Inject
 	private HiddenObjectExaminerOverlay(
@@ -53,10 +58,12 @@ final class HiddenObjectExaminerOverlay extends Overlay
 		Color border = new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.max(160, color.getAlpha()));
 		Stroke previousStroke = graphics.getStroke();
 		graphics.setStroke(new BasicStroke(2f));
-		for (TileObject object : plugin.getHiddenObjects())
+		LocalPoint playerLocation = player.getLocalLocation();
+		plugin.collectHiddenObjectsNear(nearbyObjects, player.getWorldView(), player.getWorldLocation().getPlane(),
+			playerLocation.getSceneX(), playerLocation.getSceneY(), config.highlightDistance());
+		for (TileObject object : nearbyObjects)
 		{
-			if (object.getWorldView() != player.getWorldView()
-				|| object.getWorldLocation().distanceTo2D(player.getWorldLocation()) > config.highlightDistance())
+			if (object.getWorldLocation().distanceTo2D(player.getWorldLocation()) > config.highlightDistance())
 			{
 				continue;
 			}

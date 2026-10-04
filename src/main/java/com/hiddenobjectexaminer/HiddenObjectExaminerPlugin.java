@@ -3,7 +3,9 @@ package com.hiddenobjectexaminer;
 import com.google.inject.Provides;
 import java.awt.Shape;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.Map;
 import java.util.Set;
 import javax.inject.Inject;
 import net.runelite.api.Client;
@@ -16,6 +18,7 @@ import net.runelite.api.Point;
 import net.runelite.api.Tile;
 import net.runelite.api.TileObject;
 import net.runelite.api.WorldView;
+import net.runelite.api.coords.LocalPoint;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.DecorativeObjectDespawned;
 import net.runelite.api.events.DecorativeObjectSpawned;
@@ -43,7 +46,9 @@ import net.runelite.client.ui.overlay.OverlayManager;
 public class HiddenObjectExaminerPlugin extends Plugin
 {
 	private static final long MENU_SUPPRESSED_FLAG = 1L << 19;
-	private final Set<TileObject> hiddenObjects = Collections.newSetFromMap(new IdentityHashMap<>());
+	private static final int CURSOR_TILE_RADIUS = 3;
+	private final Map<Long, Set<TileObject>> hiddenObjectsByTile = new HashMap<>();
+	private final Set<TileObject> cursorObjects = Collections.newSetFromMap(new IdentityHashMap<>());
 
 	@Inject
 	private Client client;
@@ -71,7 +76,8 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	protected void shutDown()
 	{
 		overlayManager.remove(overlay);
-		hiddenObjects.clear();
+		hiddenObjectsByTile.clear();
+		cursorObjects.clear();
 	}
 
 	@Subscribe
@@ -83,7 +89,15 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		}
 
 		Point mouse = client.getMouseCanvasPosition();
-		for (TileObject object : hiddenObjects)
+		Tile selectedTile = client.getSelectedSceneTile();
+		if (selectedTile == null)
+		{
+			return;
+		}
+		Point selected = selectedTile.getSceneLocation();
+		collectHiddenObjectsNear(cursorObjects, client.getTopLevelWorldView(), selectedTile.getPlane(),
+			selected.getX(), selected.getY(), CURSOR_TILE_RADIUS);
+		for (TileObject object : cursorObjects)
 		{
 			if (!containsMouse(object, mouse))
 			{
@@ -123,7 +137,8 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		}
 		else if (event.getGameState() == GameState.LOADING || event.getGameState() == GameState.LOGIN_SCREEN)
 		{
-			hiddenObjects.clear();
+			hiddenObjectsByTile.clear();
+			cursorObjects.clear();
 		}
 	}
 
@@ -136,7 +151,8 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	@Subscribe
 	public void onWorldViewUnloaded(WorldViewUnloaded event)
 	{
-		hiddenObjects.removeIf(object -> object.getWorldView() == event.getWorldView());
+		int worldViewId = event.getWorldView().getId();
+		hiddenObjectsByTile.entrySet().removeIf(entry -> worldViewIdFromKey(entry.getKey()) == worldViewId);
 	}
 
 	@Subscribe
@@ -187,9 +203,30 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		remove(event.getGroundObject());
 	}
 
-	Set<TileObject> getHiddenObjects()
+	void collectHiddenObjectsNear(Set<TileObject> destination, WorldView worldView, int plane,
+		int sceneX, int sceneY, int radius)
 	{
-		return hiddenObjects;
+		destination.clear();
+		if (worldView == null)
+		{
+			return;
+		}
+
+		int minX = Math.max(0, sceneX - radius);
+		int maxX = Math.min(103, sceneX + radius);
+		int minY = Math.max(0, sceneY - radius);
+		int maxY = Math.min(103, sceneY + radius);
+		for (int x = minX; x <= maxX; x++)
+		{
+			for (int y = minY; y <= maxY; y++)
+			{
+				Set<TileObject> objects = hiddenObjectsByTile.get(tileKey(worldView.getId(), plane, x, y));
+				if (objects != null)
+				{
+					destination.addAll(objects);
+				}
+			}
+		}
 	}
 
 	static boolean isMenuSuppressed(long hash)
@@ -263,7 +300,8 @@ public class HiddenObjectExaminerPlugin extends Plugin
 
 	private void rebuildSceneObjects()
 	{
-		hiddenObjects.clear();
+		hiddenObjectsByTile.clear();
+		cursorObjects.clear();
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			addWorldView(client.getTopLevelWorldView());
@@ -313,13 +351,45 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	{
 		if (object != null && isMenuSuppressed(object.getHash()))
 		{
-			hiddenObjects.add(object);
+			LocalPoint location = object.getLocalLocation();
+			long key = tileKey(object.getWorldView().getId(), object.getPlane(), location.getSceneX(), location.getSceneY());
+			hiddenObjectsByTile
+				.computeIfAbsent(key, ignored -> Collections.newSetFromMap(new IdentityHashMap<>()))
+				.add(object);
 		}
 	}
 
 	private void remove(TileObject object)
 	{
-		hiddenObjects.remove(object);
+		if (object == null)
+		{
+			return;
+		}
+
+		LocalPoint location = object.getLocalLocation();
+		long key = tileKey(object.getWorldView().getId(), object.getPlane(), location.getSceneX(), location.getSceneY());
+		Set<TileObject> objects = hiddenObjectsByTile.get(key);
+		if (objects != null)
+		{
+			objects.remove(object);
+			if (objects.isEmpty())
+			{
+				hiddenObjectsByTile.remove(key);
+			}
+		}
+	}
+
+	private static long tileKey(int worldViewId, int plane, int sceneX, int sceneY)
+	{
+		return ((long) worldViewId & 0xFFFL) << 16
+			| (long) (plane & 3) << 14
+			| (long) (sceneY & 127) << 7
+			| sceneX & 127;
+	}
+
+	private static int worldViewIdFromKey(long key)
+	{
+		return (int) (key >>> 16 & 0xFFFL);
 	}
 
 	@Provides
