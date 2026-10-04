@@ -26,5 +26,6 @@ public class HiddenObjectClassifierTest
 	public void includesObjectIdInMenuTarget()
 	{
 		assertTrue(HiddenObjectExaminerPlugin.targetFor(688).contains("688"));
+		assertTrue(HiddenObjectExaminerPlugin.targetFor("Shield display", 12345).contains("Shield display (12345)"));
 	}
 }

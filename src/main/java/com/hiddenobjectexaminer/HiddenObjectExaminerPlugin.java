@@ -8,6 +8,7 @@ import java.util.Set;
 import javax.inject.Inject;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.GameObject;
 import net.runelite.api.MenuAction;
 import net.runelite.api.MenuEntry;
 import net.runelite.api.ObjectComposition;
@@ -42,6 +43,8 @@ import net.runelite.client.ui.overlay.OverlayManager;
 public class HiddenObjectExaminerPlugin extends Plugin
 {
 	private final Set<TileObject> sceneObjects = Collections.newSetFromMap(new IdentityHashMap<>());
+	private final Set<TileObject> confirmedHiddenObjects = Collections.newSetFromMap(new IdentityHashMap<>());
+	private final Set<TileObject> confirmedNativeObjects = Collections.newSetFromMap(new IdentityHashMap<>());
 
 	@Inject
 	private Client client;
@@ -70,6 +73,8 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	{
 		overlayManager.remove(overlay);
 		sceneObjects.clear();
+		confirmedHiddenObjects.clear();
+		confirmedNativeObjects.clear();
 	}
 
 	@Subscribe
@@ -83,18 +88,36 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		Point mouse = client.getMouseCanvasPosition();
 		for (TileObject object : sceneObjects)
 		{
-			if (!isHiddenObject(object) || !containsMouse(object, mouse) || hasExamineEntry(object))
+			if (!containsMouse(object, mouse))
 			{
 				continue;
 			}
 
+			ObjectComposition composition = getActiveComposition(object);
+			if (composition == null)
+			{
+				continue;
+			}
+
+			int examineId = composition.getId();
+			Point menuPoint = getMenuPoint(object);
+			if (hasExamineEntry(object, examineId, menuPoint))
+			{
+				confirmedNativeObjects.add(object);
+				confirmedHiddenObjects.remove(object);
+				continue;
+			}
+
+			confirmedHiddenObjects.add(object);
+			confirmedNativeObjects.remove(object);
+
 			client.createMenuEntry(-1)
 				.setOption("Examine")
-				.setTarget(targetFor(object.getId()))
-				.setIdentifier(object.getId())
+				.setTarget(targetFor(composition.getName(), examineId))
+				.setIdentifier(examineId)
 				.setType(MenuAction.EXAMINE_OBJECT)
-				.setParam0(object.getLocalLocation().getSceneX())
-				.setParam1(object.getLocalLocation().getSceneY())
+				.setParam0(menuPoint.getX())
+				.setParam1(menuPoint.getY())
 				.setWorldViewId(object.getWorldView().getId());
 		}
 	}
@@ -109,6 +132,8 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		else if (event.getGameState() == GameState.LOADING || event.getGameState() == GameState.LOGIN_SCREEN)
 		{
 			sceneObjects.clear();
+			confirmedHiddenObjects.clear();
+			confirmedNativeObjects.clear();
 		}
 	}
 
@@ -122,6 +147,8 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	public void onWorldViewUnloaded(WorldViewUnloaded event)
 	{
 		sceneObjects.removeIf(object -> object.getWorldView() == event.getWorldView());
+		confirmedHiddenObjects.removeIf(object -> object.getWorldView() == event.getWorldView());
+		confirmedNativeObjects.removeIf(object -> object.getWorldView() == event.getWorldView());
 	}
 
 	@Subscribe
@@ -133,7 +160,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	@Subscribe
 	public void onGameObjectDespawned(GameObjectDespawned event)
 	{
-		sceneObjects.remove(event.getGameObject());
+		remove(event.getGameObject());
 	}
 
 	@Subscribe
@@ -145,7 +172,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	@Subscribe
 	public void onWallObjectDespawned(WallObjectDespawned event)
 	{
-		sceneObjects.remove(event.getWallObject());
+		remove(event.getWallObject());
 	}
 
 	@Subscribe
@@ -157,7 +184,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	@Subscribe
 	public void onDecorativeObjectDespawned(DecorativeObjectDespawned event)
 	{
-		sceneObjects.remove(event.getDecorativeObject());
+		remove(event.getDecorativeObject());
 	}
 
 	@Subscribe
@@ -169,7 +196,7 @@ public class HiddenObjectExaminerPlugin extends Plugin
 	@Subscribe
 	public void onGroundObjectDespawned(GroundObjectDespawned event)
 	{
-		sceneObjects.remove(event.getGroundObject());
+		remove(event.getGroundObject());
 	}
 
 	Set<TileObject> getSceneObjects()
@@ -179,19 +206,19 @@ public class HiddenObjectExaminerPlugin extends Plugin
 
 	boolean isHiddenObject(TileObject object)
 	{
-		ObjectComposition composition = client.getObjectDefinition(object.getId());
-		if (composition == null)
+		if (confirmedNativeObjects.contains(object))
 		{
 			return false;
 		}
-
-		if (composition.getImpostorIds() != null)
+		if (confirmedHiddenObjects.contains(object))
 		{
-			composition = composition.getImpostor();
-			if (composition == null)
-			{
-				return false;
-			}
+			return true;
+		}
+
+		ObjectComposition composition = getActiveComposition(object);
+		if (composition == null)
+		{
+			return false;
 		}
 
 		boolean anyShownOperation = false;
@@ -233,17 +260,34 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		return "<col=00ffff>Unnamed object (" + objectId + ")</col>";
 	}
 
-	private boolean hasExamineEntry(TileObject object)
+	static String targetFor(String name, int objectId)
 	{
-		int sceneX = object.getLocalLocation().getSceneX();
-		int sceneY = object.getLocalLocation().getSceneY();
+		if (name == null || name.trim().isEmpty() || "null".equalsIgnoreCase(name.trim()))
+		{
+			return targetFor(objectId);
+		}
+		return "<col=00ffff>" + name + " (" + objectId + ")</col>";
+	}
+
+	private ObjectComposition getActiveComposition(TileObject object)
+	{
+		ObjectComposition composition = client.getObjectDefinition(object.getId());
+		if (composition != null && composition.getImpostorIds() != null)
+		{
+			composition = composition.getImpostor();
+		}
+		return composition;
+	}
+
+	private boolean hasExamineEntry(TileObject object, int examineId, Point menuPoint)
+	{
 		int worldViewId = object.getWorldView().getId();
 		for (MenuEntry entry : client.getMenuEntries())
 		{
 			if (entry.getType() == MenuAction.EXAMINE_OBJECT
-				&& entry.getIdentifier() == object.getId()
-				&& entry.getParam0() == sceneX
-				&& entry.getParam1() == sceneY
+				&& (entry.getIdentifier() == object.getId() || entry.getIdentifier() == examineId)
+				&& entry.getParam0() == menuPoint.getX()
+				&& entry.getParam1() == menuPoint.getY()
 				&& entry.getWorldViewId() == worldViewId)
 			{
 				return true;
@@ -262,9 +306,24 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		return clickbox != null && clickbox.contains(mouse.getX(), mouse.getY());
 	}
 
+	private static Point getMenuPoint(TileObject object)
+	{
+		if (object instanceof GameObject)
+		{
+			Point sceneMin = ((GameObject) object).getSceneMinLocation();
+			if (sceneMin != null)
+			{
+				return sceneMin;
+			}
+		}
+		return new Point(object.getLocalLocation().getSceneX(), object.getLocalLocation().getSceneY());
+	}
+
 	private void rebuildSceneObjects()
 	{
 		sceneObjects.clear();
+		confirmedHiddenObjects.clear();
+		confirmedNativeObjects.clear();
 		if (client.getGameState() == GameState.LOGGED_IN)
 		{
 			addWorldView(client.getTopLevelWorldView());
@@ -316,6 +375,13 @@ public class HiddenObjectExaminerPlugin extends Plugin
 		{
 			sceneObjects.add(object);
 		}
+	}
+
+	private void remove(TileObject object)
+	{
+		sceneObjects.remove(object);
+		confirmedHiddenObjects.remove(object);
+		confirmedNativeObjects.remove(object);
 	}
 
 	@Provides

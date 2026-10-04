@@ -15,7 +15,7 @@ public interface HiddenObjectExaminerConfig extends Config
 	@ConfigItem(
 		keyName = "showHighlights",
 		name = "Highlight hidden objects",
-		description = "Outline unnamed, actionless scenery that is normally absent from the right-click menu",
+		description = "Outline scenery whose Examine entry is absent from the normal right-click menu",
 		position = 0
 	)
 	default boolean showHighlights()
